@@ -107,8 +107,9 @@ HookBoxProtocol = Class([RTJPProtocol], function(supr) {
 	// Public api
 	this.onOpen = function(args) { }
 	this.onClose = function(err, wasConnected) { }
+	this.onConnectionLost = function(reason) { }
 	this.onError = function(args) { }
-	this.onSubscribed = function(name, subscription) { }
+	this.onSubscribed = function(name, subscription, args) { }
 	this.onUnsubscribed = function(subscription, args) { }
 	this.onMessaged = function(args) {}
 	this.init = function(url, connectPayload, cookieString) {
@@ -158,7 +159,17 @@ HookBoxProtocol = Class([RTJPProtocol], function(supr) {
 	this.connectionMade = function() {
 		logger.debug('connectionMade');
 		this.transport.setEncoding('utf8');
-		this.sendFrame('CONNECT', { cookie_string: this.cookieString, payload: JSON.stringify(this._connectPayload) });
+                if (this.cookieString===''){
+                    //workaround for IE8 bug 
+                    //http://blogs.msdn.com/b/jscript/archive/2009/06/23/serializing-the-value-of-empty-dom-elements-using-native-json-in-ie8.aspx
+		    if (this._connectPayload===undefined){
+                        this.sendFrame('CONNECT', { cookie_string: '', payload: this._connectPayload});
+                    }else{
+		        this.sendFrame('CONNECT', { cookie_string: '', payload: JSON.stringify(this._connectPayload) });
+                    }
+                } else{
+		    this.sendFrame('CONNECT', { cookie_string: this.cookieString, payload: JSON.stringify(this._connectPayload) });
+                }
 	}
 
 	this.frameReceived = function(fId, fName, fArgs) {
@@ -194,7 +205,7 @@ HookBoxProtocol = Class([RTJPProtocol], function(supr) {
 							channel_name: fArgs.channel_name
 						});
 					});
-					this.onSubscribed(fArgs.channel_name, s);
+					this.onSubscribed(fArgs.channel_name, s, fArgs);
 					K = s;
 				}
 				else {
@@ -239,7 +250,14 @@ HookBoxProtocol = Class([RTJPProtocol], function(supr) {
 		} else {
 			logger.debug('connectionLost');
 			this.connected = false;
-			this.onClose();
+			if (typeof(reason.type)=="string" && (reason.type=="ServerUnreachable" || reason.type=="ConnectionTimeout"))
+			{
+				this.onConnectionLost(reason.type);
+			}
+			else
+			{
+				this.onClose();
+			}
 		}
 	}
 

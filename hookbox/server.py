@@ -12,8 +12,6 @@ from paste import urlmap, urlparser
 eventlet.monkey_patch(all=False, socket=True, select=True)
 
 from restkit import Resource
-from restkit.manager.meventlet import EventletManager
-
 
 import eventlet.wsgi
 import eventlet.websocket
@@ -76,8 +74,18 @@ class HookboxServer(object):
         self.conns_by_cookie = {}
         self.conns = {}
         self.users = {}
-        self.manager = EventletManager(timeout=300, max_conn=300)
+
         self.user_channel_presence = {}
+        self._http = None
+        self._url = None
+        #connection hack to increase connection limit, linux only for now
+        try:
+            import resource
+            #get soft limit of max number of open files
+            self.max_conn = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        except ImportError:
+            self.max_conn = 1024
+
 
     def _ws_wrapper(self, environ, start_response):
         environ['PATH_INFO'] = environ['SCRIPT_NAME'] + environ['PATH_INFO']
@@ -102,8 +110,8 @@ class HookboxServer(object):
 
         if not self._bound_socket:
             self._bound_socket = eventlet.listen((self.config.interface, self.config.port))
-        eventlet.spawn(eventlet.wsgi.server, self._bound_socket, self._root_wsgi_app, log=EmptyLogShim())
-
+        eventlet.spawn(eventlet.wsgi.server, self._bound_socket, self._root_wsgi_app, log=EmptyLogShim(), max_size=self.max_conn)
+        
         # We can't get the main interface host, port from config, in case it
         # was passed in directly to the constructor as a bound sock.
         main_host, main_port = self._bound_socket.getsockname()
@@ -218,7 +226,12 @@ class HookboxServer(object):
         body = None
         try:
             try:
-                http = Resource(url, manager=self.manager)
+                #check and change url if necessary
+                if self._url is None or self._url != url:
+                    self._http = Resource(url)
+                    self._url = url
+                http = self._http
+
                 response = http.request(method='POST', path=path, payload=form_body, headers=headers)
                 body = response.body_string()
             except socket.error, e:
@@ -230,6 +243,9 @@ class HookboxServer(object):
             self.admin.webhook_event(path_name, url, 0, False, body, form_body, cookie_string, e)
             logger.warn('Exception with webhook %s%s' % (url, path), exc_info=True)
             return False, { 'error': 'failure: %s' % (e,) }
+
+        logger.info("%s%s/%s ==> %s %s"%(url, path,form_body, response.status, body))
+
         if response.status_int != 200:
             self.admin.webhook_event(path_name, url, response.status_int, False, body, form_body, cookie_string, "Invalid status")
             raise ExpectedException("Invalid callback response, status=%s (%s), body: %s" % (response.status_int, path, body))

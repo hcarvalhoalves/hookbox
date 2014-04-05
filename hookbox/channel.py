@@ -17,6 +17,8 @@ class Channel(object):
         'reflective': True,
         'history': [],
         'history_size': 0,
+        'history_duration': 0,
+        'history_publish_only': False,
         'moderated': True,
         'moderated_publish': False,
         'moderated_subscribe': False,
@@ -56,6 +58,13 @@ class Channel(object):
     def prune_history(self):
         while len(self.history) > self.history_size:
             self.history.pop(0)
+        if self.history_duration > 0:
+            limit = (datetime.datetime.now() - \
+                     datetime.timedelta(seconds=self.history_duration))
+            limit_str = limit.strftime('%Y-%m-%dT%H:%M:%S')
+            while len(self.history) > 0 and \
+                      self.history[0][1]['datetime'] < limit_str:
+                self.history.pop(0)
 
     def update_options(self, notify_polling=True, **options):
         # TODO: this can't remain so generic forever. At some point we need
@@ -213,10 +222,6 @@ class Channel(object):
                 initial_data = options['initial_data']
             self.server.maybe_auto_subscribe(user, options, conn=conn)
             
-        if has_initial_data or self.history:
-            frame = dict(channel_name=self.name, history=self.history, initial_data=initial_data)
-            user.send_frame('CHANNEL_INIT', frame, channel=self)
-
         self.subscribers.append(user)
         user.channel_subscribed(self, conn=conn)
         _now = get_now()
@@ -231,7 +236,7 @@ class Channel(object):
         
         user.send_frame('SUBSCRIBE', frame, channel=self)
             
-        if self.history_size:
+        if self.history_size and not self.history_publish_only:
             self.history.append(('SUBSCRIBE', {"user": user.get_name(), "datetime": _now }))
             self.prune_history()
 
@@ -304,7 +309,10 @@ class Channel(object):
         frame = {"channel_name": self.name, "user": user.get_name()}
         frame["history"] = self.history
         frame["history_size"] = self.history_size
+        frame["history_duration"] = self.history_duration
         frame["state"] = self.state
+        if initial_data:
+            frame["initial_data"] = initial_data
         if self.presenceful:
             frame['presence'] = [ subscriber.get_name() for subscriber in self.subscribers ]
         else:
@@ -337,7 +345,7 @@ class Channel(object):
         except ValueError: # Maybe this user are no more subscribed.
             pass
         user.channel_unsubscribed(self)
-        if self.history_size:
+        if self.history_size and not self.history_publish_only:
             del frame['channel_name']
             self.history.append(('UNSUBSCRIBE', frame))
             self.prune_history()
