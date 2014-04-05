@@ -32,7 +32,7 @@ _install_requires = [
     'rtjp_eventlet>=0.3.2', 
     'pygments',
     'restkit==4.1.3',
-    'event==0.4.2',
+#    'event==0.4.2',
 #    'nose==0.11.1',
 #    'coverage',
 ]
